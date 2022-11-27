@@ -1,0 +1,1 @@
+{"version":3,"file":"btc-types.d.ts","sourceRoot":"","sources":["../../../../../src/lib/vm/instruction-sets/btc/btc-types.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,gCAAgC,EAAE,MAAM,cAAc,CAAC;AAErE,MAAM,WAAW,WAAW;IAC1B,QAAQ,CAAC,eAAe,EAAE,UAAU,CAAC;CACtC;AAED,MAAM,WAAW,6BACf,SAAQ,gCAAgC,EACtC,WAAW;CAAG"}
