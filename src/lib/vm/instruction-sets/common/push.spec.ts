@@ -7,6 +7,10 @@ const enum PushOperationConstants {
   OP_PUSHDATA_2 = 0x4d,
   OP_PUSHDATA_4 = 0x4e,
   /**
+   * OP_PUSHBYTES_75
+   */
+  maximumPushByteOperationSize = 0x4b,
+  /**
    * 256 - 1
    */
   maximumPushData1Size = 255,
@@ -51,6 +55,29 @@ test('prefixDataPush', (t) => {
   prefixDataPushVectors.forEach(([inputHex, outputHex]) => {
     t.deepEqual(encodeDataPush(hexToBin(inputHex)), hexToBin(outputHex));
   });
+  t.deepEqual(
+    encodeDataPush(
+      Uint8Array.from(
+        range(PushOperationConstants.maximumPushByteOperationSize),
+      ),
+    ),
+    Uint8Array.from([
+      PushOperationConstants.maximumPushByteOperationSize,
+      ...range(PushOperationConstants.maximumPushByteOperationSize),
+    ]),
+  );
+  t.deepEqual(
+    encodeDataPush(
+      Uint8Array.from(
+        range(PushOperationConstants.maximumPushByteOperationSize + 1),
+      ),
+    ),
+    Uint8Array.from([
+      PushOperationConstants.OP_PUSHDATA_1,
+      PushOperationConstants.maximumPushByteOperationSize + 1,
+      ...range(PushOperationConstants.maximumPushByteOperationSize + 1),
+    ]),
+  );
   t.deepEqual(
     encodeDataPush(
       Uint8Array.from(range(PushOperationConstants.maximumPushData1Size)),

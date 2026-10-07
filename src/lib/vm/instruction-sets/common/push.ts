@@ -58,6 +58,19 @@ const enum PushOperationConstants {
 }
 
 /**
+ * Return the push instruction made of `header` (the push opcode followed by any
+ * length bytes) and `data`, copying `data` into the result only once.
+ */
+const prefixPushData = (header: readonly number[], data: Uint8Array) => {
+  const instruction = new Uint8Array(header.length + data.length);
+  // eslint-disable-next-line functional/no-expression-statements
+  instruction.set(header);
+  // eslint-disable-next-line functional/no-expression-statements
+  instruction.set(data, header.length);
+  return instruction;
+};
+
+/**
  * Returns the minimal bytecode required to push the provided `data` to the
  * stack.
  *
@@ -96,25 +109,28 @@ export const encodeDataPush = (data: Uint8Array) =>
             )
           : data[0] === PushOperationConstants.negativeOne
             ? Uint8Array.of(PushOperationConstants.OP_1NEGATE)
-            : Uint8Array.from([1, ...data])
-        : Uint8Array.from([data.length, ...data])
+            : prefixPushData([1], data)
+        : prefixPushData([data.length], data)
     : data.length <= PushOperationConstants.maximumPushData1Size
-      ? Uint8Array.from([
-          PushOperationConstants.OP_PUSHDATA_1,
-          data.length,
-          ...data,
-        ])
+      ? prefixPushData(
+          [PushOperationConstants.OP_PUSHDATA_1, data.length],
+          data,
+        )
       : data.length <= PushOperationConstants.maximumPushData2Size
-        ? Uint8Array.from([
-            PushOperationConstants.OP_PUSHDATA_2,
-            ...numberToBinUint16LE(data.length),
-            ...data,
-          ])
-        : Uint8Array.from([
-            PushOperationConstants.OP_PUSHDATA_4,
-            ...numberToBinUint32LE(data.length),
-            ...data,
-          ]);
+        ? prefixPushData(
+            [
+              PushOperationConstants.OP_PUSHDATA_2,
+              ...numberToBinUint16LE(data.length),
+            ],
+            data,
+          )
+        : prefixPushData(
+            [
+              PushOperationConstants.OP_PUSHDATA_4,
+              ...numberToBinUint32LE(data.length),
+            ],
+            data,
+          );
 
 /**
  * Returns true if the provided `data` is minimally-encoded by the provided
