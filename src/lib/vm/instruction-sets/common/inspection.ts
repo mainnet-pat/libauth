@@ -1,5 +1,6 @@
 import { int32UnsignedToSigned } from '../../../format/format.js';
 import type {
+  AuthenticationInstruction,
   AuthenticationProgramStateError,
   AuthenticationProgramStateMinimum,
   AuthenticationProgramStateStack,
@@ -27,6 +28,38 @@ export const opInputIndex = <
   state: State,
 ) => pushToStackVmNumber(state, BigInt(state.program.inputIndex));
 
+/**
+ * Encoded active bytecode by instruction list, then by the position of the
+ * last executed OP_CODESEPARATOR. The VM never modifies an instruction list,
+ * so each active bytecode is encoded once.
+ */
+const encodedActiveBytecode = new WeakMap<
+  AuthenticationInstruction[],
+  Map<number, Uint8Array>
+>();
+
+const encodeActiveBytecode = (
+  instructions: AuthenticationInstruction[],
+  lastCodeSeparator: number,
+) => {
+  const byCodeSeparator =
+    encodedActiveBytecode.get(instructions) ?? new Map<number, Uint8Array>();
+  const cached = byCodeSeparator.get(lastCodeSeparator);
+  if (cached !== undefined) return cached;
+  const encoded = encodeAuthenticationInstructions(
+    instructions.slice(lastCodeSeparator + 1),
+  );
+  /* eslint-disable functional/no-expression-statements */
+  byCodeSeparator.set(lastCodeSeparator, encoded);
+  encodedActiveBytecode.set(instructions, byCodeSeparator);
+  /* eslint-enable functional/no-expression-statements */
+  return encoded;
+};
+
+/**
+ * Push the active bytecode. The same encoding may be pushed repeatedly: stack
+ * items are never modified in place.
+ */
 export const createOpActiveBytecode =
   ({
     maximumStackItemLength = ConsensusCommon.maximumStackItemLength as number,
@@ -42,9 +75,7 @@ export const createOpActiveBytecode =
   ) =>
     pushToStackChecked(
       state,
-      encodeAuthenticationInstructions(
-        state.instructions.slice(state.lastCodeSeparator + 1),
-      ),
+      encodeActiveBytecode(state.instructions, state.lastCodeSeparator),
       { maximumStackItemLength },
     );
 export const opActiveBytecode = createOpActiveBytecode();
