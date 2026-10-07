@@ -72,6 +72,26 @@ export const createOpDefine =
       });
     });
 
+/**
+ * Decoded instructions by function body. A body is never modified once
+ * OP_DEFINE stores it, and the VM never modifies an instruction list, so each
+ * body is decoded on its first OP_INVOKE and its instructions are reused by
+ * every later invocation.
+ */
+const decodedFunctionBodies = new WeakMap<
+  Uint8Array,
+  ReturnType<typeof decodeAuthenticationInstructions>
+>();
+
+const decodeFunctionBody = (functionBody: Uint8Array) => {
+  const cached = decodedFunctionBodies.get(functionBody);
+  if (cached !== undefined) return cached;
+  const decoded = decodeAuthenticationInstructions(functionBody);
+  // eslint-disable-next-line functional/no-expression-statements
+  decodedFunctionBodies.set(functionBody, decoded);
+  return decoded;
+};
+
 export const opInvoke = <
   State extends AuthenticationProgramStateControlStack &
     AuthenticationProgramStateError &
@@ -91,7 +111,7 @@ export const opInvoke = <
         `Function identifier: 0x${functionTableKey}.`,
       );
     }
-    const newInstructions = decodeAuthenticationInstructions(functionBody);
+    const newInstructions = decodeFunctionBody(functionBody);
     if (authenticationInstructionsAreMalformed(newInstructions)) {
       return applyError(
         nextState,
