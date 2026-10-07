@@ -489,7 +489,34 @@ export const isVmNumberError = (
 
 const enum VmNumber {
   signByte = 0x80,
+  /**
+   * The longest VM Number decoded with Number arithmetic: 4 bytes hold a
+   * magnitude of at most 31 bits.
+   */
+  maximumShortLength = 4,
 }
+
+/**
+ * Decode a VM Number of 1 to 4 bytes with Number arithmetic. The caller must
+ * have checked the length (and, if required, the minimal encoding).
+ */
+const decodeShortVmNumber = (bytes: Uint8Array) => {
+  const byteRange = 256;
+  const allButTheSignBit = 0b1111_111;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const mostSignificantByte = bytes[bytes.length - 1]!;
+  // eslint-disable-next-line functional/no-let, no-bitwise
+  let magnitude = mostSignificantByte & allButTheSignBit;
+  // eslint-disable-next-line functional/no-loop-statements, functional/no-let
+  for (let i = bytes.length - 1 - 1; i >= 0; i -= 1) {
+    // eslint-disable-next-line functional/no-expression-statements, @typescript-eslint/no-non-null-assertion
+    magnitude = magnitude * byteRange + bytes[i]!;
+  }
+  // eslint-disable-next-line no-bitwise
+  return (mostSignificantByte & VmNumber.signByte) === 0
+    ? magnitude
+    : -magnitude;
+};
 
 /**
  * This method attempts to decode a VM Number, a format in which numeric values
@@ -558,6 +585,14 @@ export const vmNumberToBigInt = (
     return VmNumberError.requiresMinimal;
   }
 
+  /*
+   * Short numbers decode exactly with Number arithmetic, without the DataView
+   * and bigint word walk below.
+   */
+  if (bytes.length <= VmNumber.maximumShortLength) {
+    return BigInt(decodeShortVmNumber(bytes));
+  }
+
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
   // eslint-disable-next-line functional/no-let
   let result = 0n;
@@ -589,6 +624,54 @@ export const vmNumberToBigInt = (
   return -(result & removeSign);
 };
 
+const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Convert a safe integer (see `Number.isSafeInteger`) into the VM Number
+ * format using Number arithmetic. The result is equal to
+ * `bigIntToVmNumber(BigInt(integer))`, byte for byte.
+ *
+ * @param integer - the safe integer to encode
+ */
+// eslint-disable-next-line complexity
+export const safeIntegerToVmNumber = (integer: number): Uint8Array => {
+  if (integer === 0) {
+    return new Uint8Array();
+  }
+  const byteRange = 256;
+  const isNegative = integer < 0;
+  const magnitude = isNegative ? -integer : integer;
+  // eslint-disable-next-line functional/no-let
+  let magnitudeLength = 1;
+  // eslint-disable-next-line functional/no-loop-statements
+  while (byteRange ** magnitudeLength <= magnitude) {
+    // eslint-disable-next-line functional/no-expression-statements
+    magnitudeLength += 1;
+  }
+  const mostSignificantByte = Math.floor(
+    magnitude / byteRange ** (magnitudeLength - 1),
+  );
+  const needsSignByte = mostSignificantByte >= VmNumber.signByte;
+  const bytes = new Uint8Array(magnitudeLength + (needsSignByte ? 1 : 0));
+  // eslint-disable-next-line functional/no-let
+  let remaining = magnitude;
+  // eslint-disable-next-line functional/no-loop-statements, functional/no-let
+  for (let i = 0; i < magnitudeLength; i += 1) {
+    // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
+    bytes[i] = remaining % byteRange;
+    // eslint-disable-next-line functional/no-expression-statements
+    remaining = Math.floor(remaining / byteRange);
+  }
+  /* eslint-disable functional/no-conditional-statements, functional/no-expression-statements, functional/immutable-data, no-bitwise, @typescript-eslint/no-non-null-assertion */
+  if (needsSignByte) {
+    bytes[magnitudeLength] = isNegative ? VmNumber.signByte : 0;
+  } else if (isNegative) {
+    bytes[magnitudeLength - 1]! |= VmNumber.signByte;
+  }
+  /* eslint-enable functional/no-conditional-statements, functional/no-expression-statements, functional/immutable-data, no-bitwise, @typescript-eslint/no-non-null-assertion */
+  return bytes;
+};
+
 /**
  * Convert a BigInt into the VM Number format. See {@link vmNumberToBigInt} for
  * more information.
@@ -601,6 +684,9 @@ export const vmNumberToBigInt = (
 export const bigIntToVmNumber = (integer: bigint): Uint8Array => {
   if (integer === 0n) {
     return new Uint8Array();
+  }
+  if (integer >= -maximumSafeInteger && integer <= maximumSafeInteger) {
+    return safeIntegerToVmNumber(Number(integer));
   }
 
   const bytes: number[] = [];

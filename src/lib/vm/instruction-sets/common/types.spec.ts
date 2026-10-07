@@ -63,6 +63,28 @@ const minimallyEncodedVmNumbers: [string, bigint][] = [
   /* spell-checker:enable */
 ];
 
+/**
+ * Minimally-encoded VM Numbers longer than 4 bytes, around the 32-bit and
+ * `Number.MAX_SAFE_INTEGER` boundaries.
+ */
+const longMinimallyEncodedVmNumbers: [string, bigint][] = [
+  /* spell-checker:disable */
+  ['0000008000', 2147483648n],
+  ['0000008080', -2147483648n],
+  ['ffffffff00', 4294967295n],
+  ['ffffffff80', -4294967295n],
+  ['ffffffff7f', 549755813887n],
+  ['000000008080', -549755813888n],
+  ['ffffffffffff1f', 9007199254740991n],
+  ['ffffffffffff9f', -9007199254740991n],
+  ['00000000000020', 9007199254740992n],
+  ['000000000000a0', -9007199254740992n],
+  ['0000000000008000', 36028797018963968n],
+  ['ffffffffffffff7f', 9223372036854775807n],
+  ['000000000000008080', -9223372036854775808n],
+  /* spell-checker:enable */
+];
+
 const nonMinimallyEncodedVmNumbers: [string, bigint][] = [
   ['00', 0n],
   ['0000', 0n],
@@ -155,8 +177,21 @@ test('decodeVmNumber', (t) => {
 });
 
 test('bigIntToVmNumber', (t) => {
-  minimallyEncodedVmNumbers.map((pair) => {
-    t.deepEqual(binToHex(bigIntToVmNumber(pair[1])), pair[0]);
+  [...minimallyEncodedVmNumbers, ...longMinimallyEncodedVmNumbers].map(
+    (pair) => {
+      t.deepEqual(binToHex(bigIntToVmNumber(pair[1])), pair[0]);
+      return undefined;
+    },
+  );
+});
+
+test('vmNumberToBigInt: longer than 4 bytes', (t) => {
+  longMinimallyEncodedVmNumbers.map((pair) => {
+    t.deepEqual(vmNumberToBigInt(hexToBin(pair[0])), pair[1]);
+    t.deepEqual(
+      vmNumberToBigInt(hexToBin(pair[0]), { maximumVmNumberByteLength: 4 }),
+      VmNumberError.outOfRange,
+    );
     return undefined;
   });
 });
