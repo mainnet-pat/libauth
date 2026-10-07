@@ -60,8 +60,12 @@ export const createOpDefine =
           // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
           finalState.functionTable = { ...finalState.functionTable };
         }
+        /*
+         * Store a compact copy: a body split from a larger item (OP_SPLIT
+         * returns views) would otherwise keep that whole item in memory.
+         */
         // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
-        finalState.functionTable[functionTableKey] = functionBody;
+        finalState.functionTable[functionTableKey] = functionBody.slice();
         // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
         finalState.functionCount += 1;
         return finalState;

@@ -39,7 +39,7 @@ export const opSplit = <
 >(
   state: State,
 ) =>
-  useOneVmNumber(state, (nextState, value) => {
+  useOneVmNumber(state, (nextState, [value]) => {
     const index = Number(value);
     return useOneStackItem(nextState, (finalState, [item]) =>
       index < 0 || index > item.length
@@ -48,7 +48,14 @@ export const opSplit = <
             AuthenticationErrorCommon.invalidSplitIndex,
             `stack item length: ${item.length}; requested split index: ${index}.`,
           )
-        : pushToStack(finalState, [item.slice(0, index), item.slice(index)]),
+        : /*
+           * Stack items are never modified in place, so both halves can be
+           * views of the split item rather than copies.
+           */
+          pushToStack(finalState, [
+            item.subarray(0, index),
+            item.subarray(index),
+          ]),
     );
   });
 

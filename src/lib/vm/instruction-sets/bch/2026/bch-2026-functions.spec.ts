@@ -81,3 +81,23 @@ test('OP_DEFINE: copies a shared table once, then defines in place', (t) => {
   t.is(defineNext(), afterFirst);
   t.deepEqual(Object.keys(state.functionTable), ['01', '02', '03']);
 });
+
+test('OP_DEFINE stores a compact copy of a split function body', (t) => {
+  // <0x515253> <1> OP_SPLIT OP_NIP <1> OP_DEFINE: the body is the view 0x5253
+  const final = vm.stateEvaluate({
+    ...defineState([]),
+    instructions: decodeAuthenticationInstructions(
+      flattenBinArray([
+        encodeDataPush(Uint8Array.of(0x51, 0x52, 0x53)),
+        encodeDataPush(Uint8Array.of(1)),
+        Uint8Array.of(OpcodesBch2026.OP_SPLIT, OpcodesBch2026.OP_NIP),
+        encodeDataPush(Uint8Array.of(1)),
+        Uint8Array.of(OpcodesBch2026.OP_DEFINE),
+      ]),
+    ),
+  });
+  t.is(final.error, undefined);
+  const body = final.functionTable['01'];
+  t.deepEqual(body, Uint8Array.of(0x52, 0x53));
+  t.is(body?.byteLength, body?.buffer.byteLength, 'the body owns its buffer');
+});
