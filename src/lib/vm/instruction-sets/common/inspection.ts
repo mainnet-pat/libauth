@@ -221,7 +221,11 @@ export const createOpInputBytecode =
     state: State,
   ) =>
     useTransactionInput(state, (nextState, [input]) =>
-      pushToStackChecked(nextState, input.unlockingBytecode.slice(), {
+      /*
+       * Stack items are never modified in place, so the unlocking bytecode is
+       * pushed without copying.
+       */
+      pushToStackChecked(nextState, input.unlockingBytecode, {
         maximumStackItemLength,
       }),
     );
