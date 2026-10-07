@@ -7,6 +7,7 @@ import type {
   AuthenticationProgramStateMinimum,
   AuthenticationProgramStateStack,
 } from '../../../../lib.js';
+import { isFunctionTableShared } from '../../../virtual-machine.js';
 import {
   applyError,
   authenticationInstructionsAreMalformed,
@@ -50,6 +51,15 @@ export const createOpDefine =
         );
       }
       return useOneStackItem(nextState, (finalState, [functionBody]) => {
+        /*
+         * A cloned program state shares its function table with the state it
+         * was cloned from, so copy a shared table before adding to it.
+         */
+        // eslint-disable-next-line functional/no-conditional-statements
+        if (isFunctionTableShared(finalState.functionTable)) {
+          // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
+          finalState.functionTable = { ...finalState.functionTable };
+        }
         // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data
         finalState.functionTable[functionTableKey] = functionBody;
         // eslint-disable-next-line functional/no-expression-statements, functional/immutable-data

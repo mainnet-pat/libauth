@@ -351,12 +351,36 @@ export type AuthenticationVirtualMachine<
 };
 
 /**
+ * Function tables referenced by more than one program state: cloning a state
+ * shares its `functionTable` rather than copying every function body, and
+ * `OP_DEFINE` copies a shared table before adding to it.
+ */
+const sharedFunctionTables = new WeakSet();
+
+/**
+ * Whether `functionTable` may be referenced by more than one program state, in
+ * which case it must be copied before it is modified.
+ * @param functionTable - the function table to check
+ */
+export const isFunctionTableShared = (functionTable: object) =>
+  sharedFunctionTables.has(functionTable);
+
+const shareFunctionTable = (functionTable: object) => {
+  // eslint-disable-next-line functional/no-expression-statements
+  sharedFunctionTables.add(functionTable);
+  return functionTable;
+};
+
+/**
  * Partially clone a `ProgramState`, avoiding duplication of components that are
  * never expected to change (improving performance and memory footprint). Note,
  * this could make mutation-related bugs in VMs harder to track down (mutations
  * in later operations can create confusion in the "history" returned by
  * `vm.debug`), but the performance and memory benefits are worth the added
  * development and testing effort.
+ *
+ * A `functionTable` is shared by the clone and the original state until either
+ * defines a function (see {@link isFunctionTableShared}).
  * @param state - the state to clone
  * @param referenceOnlyKeys - keys which should be copied entirely by reference
  * @param shallowCloneArrayKeys - keys to arrays which should be shallow cloned
@@ -380,7 +404,9 @@ export const partiallyCloneProgramState = <
         ? [key, value]
         : shallowCloneArrayKeys.includes(key)
           ? [key, (value as unknown[]).slice()]
-          : [key, structuredClone(value)],
+          : key === 'functionTable'
+            ? [key, shareFunctionTable(value as object)]
+            : [key, structuredClone(value)],
     ),
   ) as ProgramState;
 
