@@ -54,7 +54,7 @@ export const op2Dup = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useTwoStackItems(state, (nextState, [a, b]) =>
-    pushToStack(nextState, [a, b, a.slice(), b.slice()], {
+    pushToStack(nextState, [a, b, a, b], {
       pushedBytes: a.length + b.length,
     }),
   );
@@ -63,7 +63,7 @@ export const op3Dup = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useThreeStackItems(state, (nextState, [a, b, c]) =>
-    pushToStack(nextState, [a, b, c, a.slice(), b.slice(), c.slice()], {
+    pushToStack(nextState, [a, b, c, a, b, c], {
       pushedBytes: a.length + b.length + c.length,
     }),
   );
@@ -72,7 +72,7 @@ export const op2Over = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useFourStackItems(state, (nextState, [a, b, c, d]) =>
-    pushToStack(nextState, [a, b, c, d, a.slice(), b.slice()], {
+    pushToStack(nextState, [a, b, c, d, a, b], {
       pushedBytes: a.length + b.length,
     }),
   );
@@ -100,7 +100,7 @@ export const opIfDup = <State extends AuthenticationProgramStateStack>(
 ) =>
   useOneStackItem(state, (nextState, [item]) =>
     stackItemIsTruthy(item)
-      ? pushToStack(nextState, [item, item.slice()], {
+      ? pushToStack(nextState, [item, item], {
           pushedBytes: item.length,
         })
       : pushToStack(nextState, [item], {
@@ -120,7 +120,7 @@ export const opDup = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useOneStackItem(state, (nextState, [item]) =>
-    pushToStack(nextState, [item, item.slice()], {
+    pushToStack(nextState, [item, item], {
       pushedBytes: item.length,
     }),
   );
@@ -136,7 +136,7 @@ export const opOver = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useTwoStackItems(state, (nextState, [a, b]) =>
-    pushToStack(nextState, [a, b, a.slice()], {
+    pushToStack(nextState, [a, b, a], {
       pushedBytes: a.length,
     }),
   );
@@ -156,7 +156,7 @@ export const opPick = <
         `Current stack depth: ${nextState.stack.length}; requested depth: ${depth}.`,
       );
     }
-    return pushToStack(nextState, [item.slice()]);
+    return pushToStack(nextState, [item]);
   });
 
 export const opRoll = <
@@ -202,7 +202,7 @@ export const opTuck = <State extends AuthenticationProgramStateStack>(
   state: State,
 ) =>
   useTwoStackItems(state, (nextState, [a, b]) =>
-    pushToStack(nextState, [b.slice(), a, b], {
+    pushToStack(nextState, [b, a, b], {
       pushedBytes: b.length,
     }),
   );
