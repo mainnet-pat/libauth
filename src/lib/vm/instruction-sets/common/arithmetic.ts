@@ -15,6 +15,10 @@ import {
 import { ConsensusCommon } from './consensus.js';
 import { applyError, AuthenticationErrorCommon } from './errors.js';
 import { opVerify } from './flow-control.js';
+import {
+  safeIntegerToVmNumber,
+  shortVmNumberToNumber,
+} from './instruction-sets-utils.js';
 
 const createNumericOperation =
   <T extends bigint[]>(
@@ -61,103 +65,235 @@ export const numericOperationBinary =
 export const numericOperationTernary =
   createNumericOperation<[bigint, bigint, bigint]>(useThreeVmNumbers);
 
+type NumericState = AuthenticationProgramStateError &
+  AuthenticationProgramStateResourceLimits &
+  AuthenticationProgramStateStack;
+
+type NumericOptions = {
+  hasEncodingCost: boolean;
+  maximumVmNumberByteLength: number;
+};
+
+/**
+ * An operation which returns `undefined`, leaving the state unchanged, when it
+ * does not apply.
+ */
+type PartialNumericOperation = <State extends NumericState>(
+  state: State,
+) => State | undefined;
+
+/**
+ * The stack item `depth` items from the top as a Number, if it is a short VM
+ * Number (see {@link shortVmNumberToNumber}) within `maximumVmNumberByteLength`.
+ */
+const shortOperand = (
+  stack: Uint8Array[],
+  depth: number,
+  maximumVmNumberByteLength: number,
+) => {
+  const item = stack[stack.length - depth];
+  return item === undefined || item.length > maximumVmNumberByteLength
+    ? undefined
+    : shortVmNumberToNumber(item);
+};
+
+/**
+ * Replace the top `operandCount` stack items with `result`, accounting for it
+ * as {@link pushToStackVmNumberChecked} does. Returns `undefined` (changing
+ * nothing) if `result` is not a safe integer or its encoding is longer than
+ * `maximumVmNumberByteLength`.
+ */
+/* eslint-disable @typescript-eslint/max-params */
+const pushShortResult = <State extends NumericState>(
+  state: State,
+  operandCount: number,
+  result: number,
+  { hasEncodingCost, maximumVmNumberByteLength }: NumericOptions,
+) => {
+  if (!Number.isSafeInteger(result)) return undefined;
+  const encoded = safeIntegerToVmNumber(result);
+  if (encoded.length > maximumVmNumberByteLength) return undefined;
+  /* eslint-disable functional/no-expression-statements, functional/immutable-data */
+  state.stack.length -= operandCount;
+  state.stack.push(encoded);
+  state.metrics.stackPushedBytes += encoded.length;
+  state.metrics.arithmeticCost += hasEncodingCost ? encoded.length : 0;
+  /* eslint-enable functional/no-expression-statements, functional/immutable-data */
+  return state;
+};
+/* eslint-enable @typescript-eslint/max-params */
+
+const shortUnary =
+  (operate: (a: number) => number, options: NumericOptions) =>
+  <State extends NumericState>(state: State) => {
+    const a = shortOperand(state.stack, 1, options.maximumVmNumberByteLength);
+    return a === undefined
+      ? undefined
+      : pushShortResult(state, 1, operate(a), options);
+  };
+
+const shortBinary =
+  (operate: (a: number, b: number) => number, options: NumericOptions) =>
+  <State extends NumericState>(state: State) => {
+    const { maximumVmNumberByteLength } = options;
+    const b = shortOperand(state.stack, 1, maximumVmNumberByteLength);
+    const a = shortOperand(state.stack, 1 + 1, maximumVmNumberByteLength);
+    return a === undefined || b === undefined
+      ? undefined
+      : pushShortResult(state, 1 + 1, operate(a, b), options);
+  };
+
+const shortTernary =
+  (
+    operate: (a: number, b: number, c: number) => number,
+    options: NumericOptions,
+  ) =>
+  <State extends NumericState>(state: State) => {
+    const { maximumVmNumberByteLength } = options;
+    const c = shortOperand(state.stack, 1, maximumVmNumberByteLength);
+    const b = shortOperand(state.stack, 1 + 1, maximumVmNumberByteLength);
+    const a = shortOperand(state.stack, 1 + 1 + 1, maximumVmNumberByteLength);
+    return a === undefined || b === undefined || c === undefined
+      ? undefined
+      : pushShortResult(state, 1 + 1 + 1, operate(a, b, c), options);
+  };
+
+/**
+ * Run `short`, which computes the operation with Number arithmetic when every
+ * operand is a short VM Number, and run `operation`, the bigint
+ * implementation, whenever `short` does not apply: for longer operands,
+ * results that are not safe integers, and every error.
+ */
+const withShortPath =
+  (short: PartialNumericOperation, operation: Operation<NumericState>) =>
+  <State extends NumericState>(state: State): State =>
+    short(state) ?? (operation(state) as State);
+
 export const createOp1Add = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => value + 1n, {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => a + 1, options),
+    numericOperationUnary(([value]) => value + 1n, options),
+  );
+};
 export const op1Add = createOp1Add();
 
 export const createOp1Sub = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => value - 1n, {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => a - 1, options),
+    numericOperationUnary(([value]) => value - 1n, options),
+  );
+};
 export const op1Sub = createOp1Sub();
 
 export const createOpNegate = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => -value, {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => -a, options),
+    numericOperationUnary(([value]) => -value, options),
+  );
+};
 export const opNegate = createOpNegate();
 
 export const createOpAbs = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => (value < 0 ? -value : value), {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => (a < 0 ? -a : a), options),
+    numericOperationUnary(([value]) => (value < 0 ? -value : value), options),
+  );
+};
 export const opAbs = createOpAbs();
 
 export const createOpNot = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => (value === 0n ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => (a === 0 ? 1 : 0), options),
+    numericOperationUnary(([value]) => (value === 0n ? 1n : 0n), options),
+  );
+};
 export const opNot = createOpNot();
 
 export const createOp0NotEqual = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationUnary(([value]) => (value === 0n ? 0n : 1n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortUnary((a) => (a === 0 ? 0 : 1), options),
+    numericOperationUnary(([value]) => (value === 0n ? 0n : 1n), options),
+  );
+};
 export const op0NotEqual = createOp0NotEqual();
 
 export const createOpAdd = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => a + b, {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => a + b, options),
+    numericOperationBinary(([a, b]) => a + b, options),
+  );
+};
 export const opAdd = createOpAdd();
 
 export const createOpSub = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => a - b, {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => a - b, options),
+    numericOperationBinary(([a, b]) => a - b, options),
+  );
+};
 export const opSub = createOpSub();
 
 export const createOpBoolAnd = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a !== 0n && b !== 0n ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a !== 0 && b !== 0 ? 1 : 0), options),
+    numericOperationBinary(
+      ([a, b]) => (a !== 0n && b !== 0n ? 1n : 0n),
+      options,
+    ),
+  );
+};
 export const opBoolAnd = createOpBoolAnd();
 
 export const createOpBoolOr = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a !== 0n || b !== 0n ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a !== 0 || b !== 0 ? 1 : 0), options),
+    numericOperationBinary(
+      ([a, b]) => (a !== 0n || b !== 0n ? 1n : 0n),
+      options,
+    ),
+  );
+};
 export const opBoolOr = createOpBoolOr();
 
 export const createOpNumEqual = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a === b ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a === b ? 1 : 0), options),
+    numericOperationBinary(([a, b]) => (a === b ? 1n : 0n), options),
+  );
+};
 export const opNumEqual = createOpNumEqual();
 
 export const createOpNumEqualVerify = ({
@@ -168,74 +304,93 @@ export const opNumEqualVerify = createOpNumEqualVerify();
 
 export const createOpNumNotEqual = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a === b ? 0n : 1n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a === b ? 0 : 1), options),
+    numericOperationBinary(([a, b]) => (a === b ? 0n : 1n), options),
+  );
+};
 export const opNumNotEqual = createOpNumNotEqual();
 
 export const createOpLessThan = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a < b ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a < b ? 1 : 0), options),
+    numericOperationBinary(([a, b]) => (a < b ? 1n : 0n), options),
+  );
+};
 export const opLessThan = createOpLessThan();
 
 export const createOpLessThanOrEqual = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a <= b ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a <= b ? 1 : 0), options),
+    numericOperationBinary(([a, b]) => (a <= b ? 1n : 0n), options),
+  );
+};
 export const opLessThanOrEqual = createOpLessThan();
 
 export const createOpGreaterThan = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a > b ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a > b ? 1 : 0), options),
+    numericOperationBinary(([a, b]) => (a > b ? 1n : 0n), options),
+  );
+};
 export const opGreaterThan = createOpGreaterThan();
 
 export const createOpGreaterThanOrEqual = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a >= b ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a >= b ? 1 : 0), options),
+    numericOperationBinary(([a, b]) => (a >= b ? 1n : 0n), options),
+  );
+};
 export const opGreaterThanOrEqual = createOpGreaterThanOrEqual();
 
 export const createOpMin = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a < b ? a : b), {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a < b ? a : b), options),
+    numericOperationBinary(([a, b]) => (a < b ? a : b), options),
+  );
+};
 export const opMin = createOpMin();
 
 export const createOpMax = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationBinary(([a, b]) => (a > b ? a : b), {
-    hasEncodingCost: true,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+  return withShortPath(
+    shortBinary((a, b) => (a > b ? a : b), options),
+    numericOperationBinary(([a, b]) => (a > b ? a : b), options),
+  );
+};
 export const opMax = createOpMax();
 
 export const createOpWithin = ({
   maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
-} = {}) =>
-  numericOperationTernary(([a, b, c]) => (b <= a && a < c ? 1n : 0n), {
-    hasEncodingCost: false,
-    maximumVmNumberByteLength,
-  });
+} = {}) => {
+  const options = { hasEncodingCost: false, maximumVmNumberByteLength };
+  return withShortPath(
+    shortTernary((a, b, c) => (b <= a && a < c ? 1 : 0), options),
+    numericOperationTernary(
+      ([a, b, c]) => (b <= a && a < c ? 1n : 0n),
+      options,
+    ),
+  );
+};
 export const opWithin = createOpWithin();
 
 const enum Constants {
@@ -265,14 +420,16 @@ export const createOpMul =
   >({
     maximumVmNumberByteLength = ConsensusCommon.maximumVmNumberByteLength as number,
   } = {}) =>
-  (state: State) =>
-    measureArithmeticCost(
+  (state: State) => {
+    const options = { hasEncodingCost: true, maximumVmNumberByteLength };
+    return measureArithmeticCost(
       state,
-      numericOperationBinary(([a, b]) => a * b, {
-        hasEncodingCost: true,
-        maximumVmNumberByteLength,
-      }),
+      withShortPath(
+        shortBinary((a, b) => a * b, options),
+        numericOperationBinary(([a, b]) => a * b, options),
+      ),
     );
+  };
 export const opMul = createOpMul();
 
 export const createOpDiv =

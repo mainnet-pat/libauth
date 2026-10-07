@@ -497,6 +497,23 @@ const enum VmNumber {
 }
 
 /**
+ * Whether the non-empty `bytes` is minimally encoded: its most significant byte
+ * must carry magnitude bits, unless the byte below needs that byte for the sign.
+ */
+const isMinimallyEncodedVmNumber = (bytes: Uint8Array) => {
+  const allButTheSignBit = 0b1111_111;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const mostSignificantByte = bytes[bytes.length - 1]!;
+  const secondMostSignificantByte = bytes[bytes.length - 1 - 1] ?? 0;
+  /* eslint-disable no-bitwise */
+  const hasMagnitudeBits = (mostSignificantByte & allButTheSignBit) !== 0;
+  const holdsTheSignBitOfTheByteBelow =
+    bytes.length > 1 && (secondMostSignificantByte & VmNumber.signByte) !== 0;
+  /* eslint-enable no-bitwise */
+  return hasMagnitudeBits || holdsTheSignBitOfTheByteBelow;
+};
+
+/**
  * Decode a VM Number of 1 to 4 bytes with Number arithmetic. The caller must
  * have checked the length (and, if required, the minimal encoding).
  */
@@ -569,19 +586,7 @@ export const vmNumberToBigInt = (
   ) {
     return VmNumberError.outOfRange;
   }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const mostSignificantByte = bytes[bytes.length - 1]!;
-  const secondMostSignificantByte = bytes[bytes.length - 1 - 1];
-  const allButTheSignBit = 0b1111_111;
-  const justTheSignBit = 0b1000_0000;
-
-  if (
-    requireMinimalEncoding &&
-    // eslint-disable-next-line no-bitwise
-    (mostSignificantByte & allButTheSignBit) === 0 &&
-    // eslint-disable-next-line no-bitwise, @typescript-eslint/no-non-null-assertion
-    (bytes.length <= 1 || (secondMostSignificantByte! & justTheSignBit) === 0)
-  ) {
+  if (requireMinimalEncoding && !isMinimallyEncodedVmNumber(bytes)) {
     return VmNumberError.requiresMinimal;
   }
 
@@ -623,6 +628,22 @@ export const vmNumberToBigInt = (
   // eslint-disable-next-line no-bitwise
   return -(result & removeSign);
 };
+
+/**
+ * Convert a short VM Number - at most 4 bytes, so a magnitude of at most 31
+ * bits - into a Number. Returns `undefined` if `bytes` is longer than 4 bytes or
+ * is not minimally encoded: use {@link vmNumberToBigInt} for those. This lets
+ * operations skip bigint arithmetic for the small numbers most scripts use.
+ *
+ * @param bytes - the VM Number to convert
+ */
+export const shortVmNumberToNumber = (bytes: Uint8Array) =>
+  bytes.length === 0
+    ? 0
+    : bytes.length > VmNumber.maximumShortLength ||
+        !isMinimallyEncodedVmNumber(bytes)
+      ? undefined
+      : decodeShortVmNumber(bytes);
 
 const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
 
